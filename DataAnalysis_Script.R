@@ -1,20 +1,21 @@
 library(readxl)
-library(janitor)
-library(ggplot2)
-library(rstatix)
-library(stringr)
-library(readr)
 library(tidyverse)
-library(dplyr)
-library(export)
-library(afex)  
 library(Hmisc)
-library(scales)
+library(EFAtools)
+library(rmcorr)
 
-#Import Hp data
+# Set paths
+zenk_path <- "/Users/sammydhouib/Desktop/Manuscript/Data/WTSP_Data.xlsx"                        # ZENK counts + MoveTime
+mr_path   <- "/Users/sammydhouib/Desktop/Manuscript/Data/Migratory restlessness raw data.csv"   # repeated-measures data
+figdir    <- "/Users/sammydhouib/Desktop/Manuscript/Figures"
+dir.create(figdir, showWarnings = FALSE)
+
+# Import and assemble
+
+#Import hippocampus data 
 HpRaw <- read_excel(
-  path  = "/Users/sammydhouib/Desktop/Honors Thesis/Data/WTSP_Data.xlsx",
-  sheet = "HippocampusRaw")  %>% # exact sheet name 
+  path  = zenk_path,
+  sheet = "HippocampusRaw")  %>% 
   mutate(
     filename_clean = filename %>%
       str_replace_all("\\s*\\(RGB\\)", "") %>%  
@@ -40,7 +41,7 @@ HpMean <- HpMean %>%
 
 #Import movement data
 MoveTime <- read_excel(
-  path  = "/Users/sammydhouib/Desktop/Honors Thesis/Data/WTSP_Data.xlsx",
+  path  = zenk_path,
   sheet = "MoveTime")  
 
 HpMean <- HpMean %>%
@@ -55,29 +56,11 @@ HpMean_collapsed <- HpMean %>%
     ),
     .groups = "drop"
   )
-HpMean_collapsed
-
-Hp_subregionsonly <- HpMean_collapsed %>%
-  filter(subregion %in% c("dl", "vm", "d")) %>%
-  select(band, caudrost, subregion, mean_count) %>%
-  pivot_wider(
-    names_from = subregion,
-    values_from = mean_count
-  ) %>%
-  arrange(band)
-
-HpMean_caudrost <- HpMean_collapsed %>%
-  group_by(band, caudrost) %>%
-  summarise(
-    mean_count = mean(mean_count, na.rm = TRUE),
-    .groups = "drop"
-  )
 
 HpMean_collapsed <- HpMean_collapsed %>%
   mutate(region = paste(caudrost, subregion, sep = "_")) %>%
   select(-caudrost, -subregion) %>%
   relocate(region, .before = 2)
-HpMean_collapsed
 
 #export hp data to corrmatrixdf
 corrmatrixdf <- HpMean_collapsed %>%
@@ -93,9 +76,8 @@ corrmatrixdf <- HpMean_collapsed %>%
 
 #Import Raw NCL data 
 NCL_raw <- read_excel(
-  path  = "/Users/sammydhouib/Desktop/Honors Thesis/Data/WTSP_Data.xlsx",
+  path  = zenk_path,
   sheet = "NCLRaw")
-NCL_raw
 
 NCLsorted <- NCL_raw %>%
   mutate(
@@ -103,10 +85,7 @@ NCLsorted <- NCL_raw %>%
       str_trim() %>%
       str_replace("NCLm\\s+_", "NCLm_") %>%
       str_remove("\\s*\\(RGB\\)$"),
-    
-    
     band = as.integer(str_extract(fname, "^NCL_(\\d+)") %>% str_remove("^NCL_")),
-
     
     subregion = str_match(fname, "_NCL([A-Za-z])_")[,2],
     
@@ -120,8 +99,6 @@ NCLsorted <- NCL_raw %>%
 NCLsorted <- NCLsorted %>%
   select(-filename, -fname)
 
-NCLsorted
-
 NCLmeans <- NCLsorted %>%
   group_by(band, subregion) %>%
   summarise(
@@ -129,24 +106,12 @@ NCLmeans <- NCLsorted %>%
     .groups = "drop"
   )
 
-NCLmeans
-
-NCL_collapsed <- NCLmeans %>%
-  select(band, subregion, mean_count) %>%
-  pivot_wider(
-    names_from = subregion,
-    values_from = mean_count
-  )
-
 NCLmeans <- NCLmeans %>%
-  mutate(subregion = recode(subregion,
+  mutate(subregion = dplyr::recode(subregion,
                             "d" = "NCLd",
                             "m" = "NCLm",
                             "v" = "NCLv"
   ))
-
-NCL_MR_joined <- NCL_collapsed %>%
-  left_join(MoveTime, by = "band")
 
 #export ncl data to corrmatrixdf
 corrmatrixdf <- corrmatrixdf %>%
@@ -162,30 +127,17 @@ corrmatrixdf <- corrmatrixdf %>%
 
 #Import Cluster N data
 clusternmean <- read_excel(
-  path  = "/Users/sammydhouib/Desktop/Honors Thesis/Data/WTSP_Data.xlsx",
+  path  = zenk_path,
   sheet = "ClusterN_Pooled")   # exact sheet name
-clusternmean
 
 clusternmean <- clusternmean %>%
   rename(ClN = mean_cell_count)
 
-clustern_joined <- MoveTime %>%
-  left_join(clusternmean, by = "band") %>%
-  arrange(band)
-
-#export ClN to corrmatrixdf
 corrmatrixdf <- corrmatrixdf %>%
   left_join(clusternmean %>% select(band, ClN), by = "band") %>%
   arrange(band)
 
-#Correlation matrix
-library(tidyverse)
-library(Hmisc)
-
-# ============================================================
-# Correlation matrix: ZENK across hippocampus, NCL, Cluster N
-# Requires: corrmatrixdf (one row per bird, numeric columns + band)
-# ============================================================
+# Correlation matrix (Fig 5)
 
 X  <- corrmatrixdf %>% select(where(is.numeric), -band) %>% as.matrix()
 rc <- Hmisc::rcorr(X, type = "pearson")
@@ -202,7 +154,7 @@ var_lab <- c("Anterior Dorsal Hippocampus","Anterior Dorsolateral Hippocampus",
              "Dorsal NCL","Medial NCL","Ventral NCL","Cluster N")
 names(var_lab) <- var_order
 
-# ---- 78 unique pairs, with BH-adjusted p values -------------
+# 78 unique pairs, with BH-adjusted p values
 pairs_df <- as.data.frame(rc$r) %>%
   rownames_to_column("var1") %>%
   pivot_longer(-var1, names_to = "var2", values_to = "r") %>%
@@ -231,7 +183,7 @@ tiles <- bind_rows(pairs_df, diag_df) %>%
 
 # ---- figure -------------------------------------------------
 pal_coral <- c("#FFFDF7", "#FEE8C8", "#FDD49E", "#FDBB84", "#FC8D59", "#E36243")
-corr_plot <- ggplot(tiles, aes(x = x, y = y)) +
+figure5 <- ggplot(tiles, aes(x = x, y = y)) +
   geom_tile(aes(fill = r), colour = "white", linewidth = 0.9) +
   geom_text(aes(label = cell), size = 2.6) +
   scale_fill_gradientn(colours = pal_coral, limits = c(0, 1),
@@ -254,9 +206,10 @@ corr_plot <- ggplot(tiles, aes(x = x, y = y)) +
         legend.text = element_text(size = 8),
         plot.margin = margin(10, 10, 6, 10))
 
-corr_plot
+figure5
 
-#Start pca with existing corrmatrix df
+# Principal components (Tables 1-2)
+
 pca_df <- corrmatrixdf %>%
   drop_na()
 
@@ -268,131 +221,47 @@ pca_res$sdev^2
 pca_res$rotation
 eigenvalues <- pca_res$sdev^2
 eigenvalues
-#parallel analysis
-library(psych)
+
 pca_data <- pca_df %>%
   select(-band) %>%
   scale()
 
-fa.parallel(
-  pca_data,
-  fa = "pc",
-  n.iter = 1000,
-  quant = 0.5,
-  show.legend = TRUE,
-  main = "Parallel Analysis"
-)
-
-#empirical kaiser criterion
-library(EFAtools)
 ekc <- EKC(pca_data)
 ekc
 
-#Scree plot
-plot(
-  pca_res,
-  type = "l",
-  main = "Scree Plot"
-)
-
-#arrow plot
-biplot(
-  pca_res,
-  scale = 0,
-  cex = 0.7
-)
-
-#PC scores for each PC, for each bird 
 scores <- as.data.frame(pca_res$x)
 
-ggplot(scores, aes(PC1, PC3)) +
-  geom_point(size = 3) +
-  theme_minimal() +
-  labs(
-    title = "PCA: PC1 vs PC3",
-    x = "PC1",
-    y = "PC2"
-  )
-
-#add back band column that was removed during PCA to run correlation by band ID 
-#(could do this with MR but band is easier on the eyes)
 scores$band <- pca_df$band
 
-#Sanity check that bands are added correctly
-scores
-pca_df
+#PC loadings reported in Table 2
 
-# Eigenvalues and kaiser criterion
-eigenvalues <- pca_res$sdev^2
-eigenvalues
-kaiser_pcs <- which(eigenvalues > 1)
-length(kaiser_pcs)
+round(pca_res$rotation[, "PC2"], 2)
+round(pca_res$rotation[, "PC3"], 2)
 
-#add MR to the scores dataset and run correlation
+#Multiple regression (Fig 6, S1 Table)
+
 reg_data <- scores %>%
   dplyr::left_join(MoveTime %>% select(band, Movement, PerMove_4, PerMove_430, PerMove_5, PerMove_530), by = "band")
 
-reg_data_new <- reg_data %>%
-  mutate(treatment = rowMeans(dplyr::select(., PerMove_4, PerMove_430), na.rm = TRUE)) %>%
-  dplyr::select(-PerMove_4, -PerMove_430)
-
-#Run models
 modelpc1 <- lm(PC1 ~ PerMove_4 + PerMove_430 + PerMove_5 + PerMove_530, data = reg_data)
 modelpc2 <- lm(PC2 ~ PerMove_4 + PerMove_430 + PerMove_5 + PerMove_530, data = reg_data)
-
-
-ggplot(reg_data, aes(x = PerMove_5, y = PerMove_530)) +
-  geom_point() +
-  labs(
-    x = "PerMove_5",
-    y = "PerMove_530"
-  ) +
-  theme_classic()
-
-cor.test(reg_data$PerMove_5, reg_data$PerMove_530, method = "spearman", exact = FALSE)
 
 summary(modelpc1)
 summary(modelpc2)
 
-
-#assumption check of the MODEL
-par(mfrow=c(2,2))
+# assumption checks: residuals vs fitted, Q-Q, scale-location, residuals vs leverage
+par(mfrow = c(2, 2))
 plot(modelpc1)
-termplot(modelpc1, partial.resid = TRUE, se = TRUE)
+plot(modelpc2)
+par(mfrow = c(1, 1))
 
-#see which brain regions explain variance in PC1 and PC2
-round(pca_res$rotation[, "PC1"], 2)
-round(pca_res$rotation[, "PC2"], 2)
-round(pca_res$rotation[, "PC3"], 2)
-round(pca_res$rotation[, "PC4"], 2)
+# collinearity among the four behavioural predictors (reported in Methods)
+car::vif(modelpc1)
 
+# full coefficient tables with 95% CIs (S1 Table)
+cbind(summary(modelpc1)$coefficients, confint(modelpc1))
+cbind(summary(modelpc2)$coefficients, confint(modelpc2))
 
-library(broom)
-
-plot_data <- reg_data %>%
-  select(PerMove_4, PerMove_430, PerMove_5, PerMove_530, PC1, PC2, PC3) %>%
-  pivot_longer(
-    cols = c(PerMove_4, PerMove_430, PerMove_5, PerMove_530),
-    names_to = "Time",
-    values_to = "Movement"
-  ) %>%
-  pivot_longer(
-    cols = c(PC1, PC2, PC3),
-    names_to = "Predictor",
-    values_to = "Score"
-  )
-
-ggplot(plot_data, aes(x = Score, y = Movement)) +
-  geom_point(size = 2) +
-  geom_smooth(method = "lm", formula = y ~ x, se = FALSE) +
-  facet_grid(Time ~ Predictor, scales = "free_x") +
-  labs(
-    x = "PC score",
-    y = "Movement (%)"
-  ) +
-  theme_classic()
-
-#PC1
 plot_pc1 <- reg_data %>%
   select(PC1, PerMove_4, PerMove_430, PerMove_5, PerMove_530) %>%
   pivot_longer(
@@ -400,9 +269,9 @@ plot_pc1 <- reg_data %>%
     names_to = "Time",
     values_to = "Movement"
       )
-    
+
     # relabel time
-    plot_pc1$Time <- recode(
+    plot_pc1$Time <- dplyr::recode(
       plot_pc1$Time,
       "PerMove_4"   = "4:00–4:30 pm",
       "PerMove_430" = "4:30–5:00 pm",
@@ -430,30 +299,21 @@ plot_pc1 <- reg_data %>%
     )
     
     # extract stats from PC1 multiple regression model
-    coef_df1 <- tidy(modelpc1) %>%
-      filter(term != "(Intercept)") %>%
+    # marginal (simple) correlations, one per time period — these match the fitted lines
+    coef_df1 <- plot_pc1 %>%
+      group_by(Time) %>%
+      summarise(
+        r = cor(Movement, PC1),
+        p = cor.test(Movement, PC1)$p.value,
+        .groups = "drop"
+      ) %>%
       mutate(
-        partial_r = statistic / sqrt(statistic^2 + df.residual(modelpc1)),
-        Time = recode(
-          term,
-          "PerMove_4"   = "4:00–4:30 pm",
-          "PerMove_430" = "4:30–5:00 pm",
-          "PerMove_5"   = "5:00–5:30 pm",
-          "PerMove_530" = "5:30–6:00 pm"
-        ),
-        Time = factor(
-          Time,
-          levels = c("4:00–4:30 pm", "4:30–5:00 pm",
-                     "5:00–5:30 pm", "5:30–6:00 pm")
-        ),
-        label = paste0(
-          "r = ", round(partial_r, 2),
-          "\np = ", signif(p.value, 2)
-        )
+        label = paste0("r = ", round(r, 2),
+                       "\np = ", signif(p, 2))
       )
-    
+
     # plot PC1
-    ggplot(plot_pc1, aes(x = Movement, y = PC1)) +
+    figure6 <- ggplot(plot_pc1, aes(x = Movement, y = PC1)) +
       geom_point(size = 2) +
       geom_smooth(aes(color = line_color), method = "lm", se = FALSE) +
       geom_text(
@@ -476,70 +336,10 @@ plot_pc1 <- reg_data %>%
         y = "PC1"
       )
 
-#Follow-up
-reg_data <- reg_data %>%
-  mutate(low_move = factor(PerMove_530 <= 15, levels = c(TRUE, FALSE),
-                           labels = c(" <= 15%", "> 15%")))
-
-t.test(PC1 ~ low_move, data = reg_data)
-
-ggplot(reg_data, aes(x = low_move, y = PC1)) +
-  geom_boxplot(outlier.shape = NA) +
-  geom_jitter(width = 0.12, size = 2) +
-  labs(x = "PerMove_530", y = "PC1") +
-  theme_classic()
-
-#rmANOVA
-areas <- setdiff(colnames(corrmatrixdf), "band")
-
-# long format: one row per bird x brain area
-long15 <- corrmatrixdf %>%
-  left_join(MoveTime %>% select(band, PerMove_530), by = "band") %>%
-  mutate(migrate = factor(PerMove_530 > 15,
-                          levels = c(FALSE, TRUE),
-                          labels = c("No", "Yes"))) %>%
-  pivot_longer(all_of(areas), names_to = "area", values_to = "zenk") %>%
-  mutate(band = factor(band),
-         area = factor(area, levels = areas))
-
-# mixed ANOVA: area within, migrate between
-fit15 <- aov_ez(id = "band", dv = "zenk", data = long15,
-                between = "migrate", within = "area",
-                anova_table = list(correction = "GG", es = "pes"))
-
-fit15                                # GG-corrected table with partial eta-squared
-summary(fit15)$sphericity.tests      # Mauchly's test
-
-# profile plot
-summ15 <- long15 %>%
-  group_by(area, migrate) %>%
-  summarise(mean = mean(zenk), se = sd(zenk)/sqrt(n()), .groups = "drop")
-
-ggplot(summ15, aes(x = area, y = mean, colour = migrate, group = migrate)) +
-  geom_line() +
-  geom_point(size = 2) +
-  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.18) +
-  labs(x = "Brain area", y = "Mean ZENK count (± SE)", colour = "Migrant") +
-  theme_classic() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-#MR Histogram
-ggplot(reg_data, aes(x = PerMove_530)) +
-  geom_histogram(binwidth = 5, boundary = 0, color = "black", fill = "grey70") +
-  geom_vline(xintercept = 15, colour = "red", linetype = "dashed", linewidth = 0.8) +
-  labs(x = "MR 5:30-6:00 pm (%)", y = "Number of birds") +
-  theme_classic()
-
-#MR vs. Quiescence
-library(emmeans)
-library(readxl)
-library(rmcorr)
+# Repeated-measures correlation (Fig 7, S2 Table)
 
 MRtime <- read.csv(
-  "/Users/sammydhouib/Desktop/Manuscript/MM:MR Linear Regression/Migratory restlessness raw data.csv")
-Movement <- read_xlsx(
-  "/Users/sammydhouib/Desktop/Manuscript/MM:MR Linear Regression/4-5pm observation data.xlsx",
-  sheet = "Sheet1")
+  mr_path)
 
 MRtime$Date <- as.factor(MRtime$Date)
 MRtime$Time <- as.factor(MRtime$Time)
@@ -550,8 +350,6 @@ MRtime <- MRtime %>%
   filter(Treatment %in% c("Control", "Warm", "Cold"))
 
 MRtime$Treatment <- droplevels(MRtime$Treatment)
-
-str(MRtime)
 
 sub <- subset(MRtime, Time == "17:30")
 sub$Bird.ID <- droplevels(factor(sub$Bird.ID))
@@ -576,7 +374,7 @@ pred <- data.frame(
                       length.out = 100))
 pred$PerMove <- intercept + slope * pred$Percentage.MR
 
-rmcorrplot <- ggplot(sub, aes(x = Percentage.MR, y = PerMove)) +
+figure7 <- ggplot(sub, aes(x = Percentage.MR, y = PerMove)) +
   geom_point(size = 2) +
   geom_line(data = pred, aes(color = "lightblue"), linewidth = 1) +
   geom_text(
@@ -591,6 +389,15 @@ rmcorrplot <- ggplot(sub, aes(x = Percentage.MR, y = PerMove)) +
   labs(x = "Migratory Restlessness from 5:30 - 6:00 pm (%)",
        y = "Movement from 5:00 - 5:30 pm (%)")
 
-rmcorrplot
+#Save figures
 
+ggsave(file.path(figdir, "Fig6.tif"), plot = figure6, device = "tiff", width = 6.5, 
+       height = 5.2, units = "in", dpi = 300, bg = "white", compression = "lzw")
+
+ggsave(file.path(figdir, "Fig5.tif"), plot = figure5, device = "tiff",
+       width = 7.5, height = 7.5, units = "in", dpi = 300,
+       bg = "white", compression = "lzw")
+
+ggsave(file.path(figdir, "Fig7.tif"), plot = figure7, device = "tiff", width = 5.5, height = 4.4,
+       units = "in", dpi = 300, bg = "white", compression = "lzw")
 
