@@ -1,0 +1,44 @@
+macro "Batch_Cell_Count" {
+    while (nImages > 0) { close(); }
+
+    dir = "/Volumes/Poecile/Sammy WTSP/TIFF/NCLNew/";
+    list = getFileList(dir);
+
+    if (isOpen("Results")) {
+        selectWindow("Results");
+        run("Close");
+    }
+    if (isOpen("Summary")) {
+        selectWindow("Summary");
+        run("Close");
+    }
+
+    for (i = 0; i < list.length; i++) {
+        name = list[i];
+
+        if (endsWith(name, ".tif") || endsWith(name, ".tiff")) {
+            open(dir + name);
+
+            if (nSlices > 1) {
+                run("Stack to RGB");
+            }
+
+            run("8-bit");
+
+            setThreshold(0,130);
+            setOption("BlackBackground", false); 
+            run("Convert to Mask");
+
+            run("Analyze Particles...", 
+                "size=15-100 circularity=0.1-1.00 show=Nothing summarize");
+            run("Close All");
+        }
+    }
+
+    if (isOpen("Summary")) {
+        selectWindow("Summary");
+        saveAs("Results", dir + "cell_count_summary.csv");
+    }
+
+    print("Batch processing finished for: " + dir);
+}
